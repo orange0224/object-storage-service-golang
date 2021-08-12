@@ -1,0 +1,23 @@
+之前es的代码是ES5版本的，与现在使用的ES7不兼容，需要修改部分接口，原es.go中存在一个拼写错误，HashHash->HasHash
+
+ES7建立索引时，不需要建立objects类型的映射，同时删除了string类型，所以需要修改建立索引的JSON
+
+{
+    “mappings”:{
+        "properties":{
+            "name":{
+                "type":"text",
+                "index":"true",
+                "fileddata":true
+            },
+            "version":{"type":"integer"},
+            "size":{"type":"integer"},
+            "hash":{"type":"text"}
+        }
+    }
+}
+将这个JSON用PUT发送到/metadata即可完成索引的建立
+
+ES7的驱动修改完毕，重新引入ES7的驱动即可
+
+

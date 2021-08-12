@@ -1,0 +1,60 @@
+1.初始化网络环境
+    1.1先使用ifconfig查看ens，本机ens33
+        sudo ifconfig ens33:1 10.29.1.1/16
+        sudo ifconfig ens33:2 10.29.1.2/16
+        sudo ifconfig ens33:3 10.29.1.3/16
+        sudo ifconfig ens33:4 10.29.1.4/16
+        sudo ifconfig ens33:5 10.29.1.5/16
+        sudo ifconfig ens33:6 10.29.1.6/16
+        sudo ifconfig ens33:7 10.29.2.1/16
+        sudo ifconfig ens33:8 10.29.2.2/16
+
+    1.2
+        第一种：本地配置RabbitMQ环境：
+            sudo apt-get install rabbitmq-server
+            sudo rabbitmq-plugins enable rabbitmq_management
+
+            wget localhost:15672/cli/rabbitmqadmin
+
+            创建exchange
+            rabbitmqadmin declare exchange name=apiServers type=fanout
+            rabbitmqadmin declare exchange name=dataServers type=fanout
+
+            添加用户
+            sudo rabbitmqctl add_user test
+
+            授权
+            sudo rabbitmqctl set_permissions -p / test ".*" ".*" ".*"
+
+        第二种：使用docker，在这里不做介绍，按照网上的教程映射端口即可
+
+2.初始化存储路径
+    for i in `seq 1 6`;do mkdir -p /tmp/$i/objects; done
+
+3.设置环境变量
+    export RABBITMQ_SERVER=amqp://test:test@192.168.110.134:5672
+    将ip改为本机ip即可
+
+4.启动数据服务器
+    LISTEN_ADDRESS=10.29.1.1:8800 STORAGE_ROOT=/tmp/1 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.2:8800 STORAGE_ROOT=/tmp/2 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.3:8800 STORAGE_ROOT=/tmp/3 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.4:8800 STORAGE_ROOT=/tmp/4 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.5:8800 STORAGE_ROOT=/tmp/5 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.6:8800 STORAGE_ROOT=/tmp/6 go run dataServer.go &
+
+5.启动接口服务器
+    LISTEN_ADDRESS=10.29.2.1:8800 go run apiServer.go &
+    LISTEN_ADDRESS=10.29.2.2:8800 go run apiServer.go &
+
+    注意端口号冒号
+
+
+6.测试并验证
+    curl -v 10.29.2.1:8800/objects/test2 -XPUT -d"This is object test2"
+
+    curl 10.29.2.1:8800/locate/test2
+
+    curl 10.29.2.1:8800/objects/test2
+
+    curl 10.29.2.2:8800/objects/test2

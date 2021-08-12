@@ -1,0 +1,82 @@
+1.初始化网络环境
+    sudo ifconfig ens33:1 10.29.1.1/16
+    sudo ifconfig ens33:2 10.29.1.2/16
+    sudo ifconfig ens33:3 10.29.1.3/16
+    sudo ifconfig ens33:4 10.29.1.4/16
+    sudo ifconfig ens33:5 10.29.1.5/16
+    sudo ifconfig ens33:6 10.29.1.6/16
+    sudo ifconfig ens33:7 10.29.2.1/16
+    sudo ifconfig ens33:8 10.29.2.2/16
+
+2.初始化存储路径
+    for i in `seq 1 6`;do mkdir -p /tmp/$i/objects; done
+	for i in `seq 1 6`;do mkdir -p /tmp/$i/temp;done
+	for i in `seq 1 6`;do mkdir -p /tmp/$i/garbage;done
+
+3.启动容器
+    docker start rabbitmq-server-storage
+    docker start elasticsearch-storage
+    docker start elasticsearch-head-storage
+
+4.设置环境变量
+    export ES_SERVER=192.168.110.134:9200
+    export RABBITMQ_SERVER=amqp://test:test@192.168.110.134:5672
+
+5.启动程序
+    LISTEN_ADDRESS=10.29.1.1:8800 STORAGE_ROOT=/tmp/1 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.2:8800 STORAGE_ROOT=/tmp/2 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.3:8800 STORAGE_ROOT=/tmp/3 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.4:8800 STORAGE_ROOT=/tmp/4 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.5:8800 STORAGE_ROOT=/tmp/5 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.6:8800 STORAGE_ROOT=/tmp/6 go run dataServer.go &
+
+    LISTEN_ADDRESS=10.29.2.1:8800 go run apiServer.go &
+    LISTEN_ADDRESS=10.29.2.2:8800 go run apiServer.go &
+
+6.测试
+    创建六个版本的对象并上传
+    echo -n "this is object test8 version 1" | openssl dgst -sha256 -binary | base64
+    curl 10.29.2.1:8800/objects/test8 -XPUT -d"" -H"Digest: SHA-256="
+
+    获取对象版本信息与最新版本
+    curl 10.29.2.1:8800/versions/test8
+    curl 10.29.2.1:8800/objects/test8
+
+    检查数据分片
+    ls -l /tmp/?/objects
+    每个目录下都有6个分片
+
+    清除旧版本数据
+    go run deleteOldMetaData.go
+    curl 10.29.2.1:8800/versions/test8
+    检查版本信息，发现只有五个版本
+
+    再次检查数据分片
+    ls -l /tmp/?/objects
+    删除无效的对象分片
+    STORAGE_ROOT=/tmp/1 LISTEN_ADDRESS=10.29.1.1:8800 go run deleteOrphanObject.go
+    STORAGE_ROOT=/tmp/2 LISTEN_ADDRESS=10.29.1.2:8800 go run deleteOrphanObject.go
+    STORAGE_ROOT=/tmp/3 LISTEN_ADDRESS=10.29.1.3:8800 go run deleteOrphanObject.go
+    STORAGE_ROOT=/tmp/4 LISTEN_ADDRESS=10.29.1.4:8800 go run deleteOrphanObject.go
+    STORAGE_ROOT=/tmp/5 LISTEN_ADDRESS=10.29.1.5:8800 go run deleteOrphanObject.go
+    STORAGE_ROOT=/tmp/6 LISTEN_ADDRESS=10.29.1.6:8800 go run deleteOrphanObject.go
+    检查数据分片
+    ls -l /tmp/?/objects
+    检查回收站
+    ls -l /tmp/?/garbage
+    删除失败的原因是没有建立对应的目录，重新删除
+
+    建立目录后重新删除，发现object里面的数据分片变成5片，garbage里面出现删除的数据分片
+
+    移除一个数据分片，破坏一个数据分片
+    ULH%2FlCWEp7WpC%2FRE%2FrSob%2FCSXwVZMDBzzVSUn268KO0=
+    rm /tmp/1/objects/ULH%2FlCWEp7WpC%2FRE%2FrSob%2FCSXwVZMDBzzVSUn268KO0=.*
+    echo some_garbage > /tmp/2/objects/ULH%2FlCWEp7WpC%2FRE%2FrSob%2FCSXwVZMDBzzVSUn268KO0=.*
+
+    检查数据分片
+    一个分片已经被删除
+
+    扫描对象列表，修复对象
+    STORAGE_ROOT=/tmp/2 go run objectScanner.go
+    检查分片
+    分片恢复正常

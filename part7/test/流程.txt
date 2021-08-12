@@ -1,0 +1,63 @@
+1.初始化网络环境
+    sudo ifconfig ens33:1 10.29.1.1/16
+    sudo ifconfig ens33:2 10.29.1.2/16
+    sudo ifconfig ens33:3 10.29.1.3/16
+    sudo ifconfig ens33:4 10.29.1.4/16
+    sudo ifconfig ens33:5 10.29.1.5/16
+    sudo ifconfig ens33:6 10.29.1.6/16
+    sudo ifconfig ens33:7 10.29.2.1/16
+    sudo ifconfig ens33:8 10.29.2.2/16
+
+2.初始化存储路径
+    for i in `seq 1 6`;do mkdir -p /tmp/$i/objects; done
+	for i in `seq 1 6`;do mkdir -p /tmp/$i/temp;done
+
+3.启动容器
+    docker start rabbitmq-server-storage
+    docker start elasticsearch-storage
+    docker start elasticsearch-head-storage
+
+4.设置环境变量
+    export ES_SERVER=192.168.110.134:9200
+    export RABBITMQ_SERVER=amqp://test:test@192.168.110.134:5672
+
+5.启动程序
+    LISTEN_ADDRESS=10.29.1.1:8800 STORAGE_ROOT=/tmp/1 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.2:8800 STORAGE_ROOT=/tmp/2 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.3:8800 STORAGE_ROOT=/tmp/3 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.4:8800 STORAGE_ROOT=/tmp/4 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.5:8800 STORAGE_ROOT=/tmp/5 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.6:8800 STORAGE_ROOT=/tmp/6 go run dataServer.go &
+
+    LISTEN_ADDRESS=10.29.2.1:8800 go run apiServer.go &
+    LISTEN_ADDRESS=10.29.2.2:8800 go run apiServer.go &
+
+6.准备文件
+    dd if=/dev/zero of=/tmp/file bs=1M count=100
+
+    openssl dgst -sha256 -binary /tmp/file | base64
+
+    IEkqTQ2E+L6xdn9mFiKfhdRMKCe2S9v7Jg7hL6EQng4=
+
+7.测试
+
+    上传文件
+    curl -v 10.29.2.1:8800/objects/test7 -XPUT --data-binary @/tmp/file -H"Digest: SHA-256=IEkqTQ2E+L6xdn9mFiKfhdRMKCe2S9v7Jg7hL6EQng4="
+
+    获取上传的文件
+    curl -v 10.29.2.1:8800/objects/test7 -o /tmp/output
+
+    对比两个文件
+    diff -s /tmp/output /tmp/file，可以看到两个文件相同
+
+    查看数据分片位置
+    ls -ltr /tmp/?/objects，看到6个分片
+
+    使用gzip下载数据
+    curl -v 10.29.2.1:8800/objects/test7 -H"Accept-Encoding: gzip" -o /tmp/output2.gz
+
+    解压缩
+    gunzip /tmp/output2.gz
+
+    对比两个文件
+    diff -s /tmp/output2 /tmp/file

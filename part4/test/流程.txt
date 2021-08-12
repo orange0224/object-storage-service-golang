@@ -1,0 +1,72 @@
+1.初始化网络环境
+    sudo ifconfig ens33:1 10.29.1.1/16
+    sudo ifconfig ens33:2 10.29.1.2/16
+    sudo ifconfig ens33:3 10.29.1.3/16
+    sudo ifconfig ens33:4 10.29.1.4/16
+    sudo ifconfig ens33:5 10.29.1.5/16
+    sudo ifconfig ens33:6 10.29.1.6/16
+    sudo ifconfig ens33:7 10.29.2.1/16
+    sudo ifconfig ens33:8 10.29.2.2/16
+
+2.初始化存储路径
+    for i in `seq 1 6`;do mkdir -p /tmp/$i/objects; done
+	for i in `seq 1 6`;do mkdir -p /tmp/$i/temp;done
+
+3.启动容器
+    docker start rabbitmq-server-storage
+    docker start elasticsearch-storage
+    docker start elasticsearch-head-storage
+
+4.设置环境变量
+    export ES_SERVER=192.168.110.134:9200
+    export RABBITMQ_SERVER=amqp://test:test@192.168.110.134:5672
+
+5.启动程序
+    LISTEN_ADDRESS=10.29.1.1:8800 STORAGE_ROOT=/tmp/1 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.2:8800 STORAGE_ROOT=/tmp/2 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.3:8800 STORAGE_ROOT=/tmp/3 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.4:8800 STORAGE_ROOT=/tmp/4 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.5:8800 STORAGE_ROOT=/tmp/5 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.6:8800 STORAGE_ROOT=/tmp/6 go run dataServer.go &
+
+    LISTEN_ADDRESS=10.29.2.1:8800 go run apiServer.go &
+    LISTEN_ADDRESS=10.29.2.2:8800 go run apiServer.go &
+
+6.测试
+    先计算目标Hash
+    echo -n "this object will have only 1 instance" | openssl dgst -sha256 -binary | base64
+    aWKQ2BipX94sb+h3xdTbWYAu1yzjn5vyFG2SOwUQIXY=
+
+    先上传一个包含错误Hash的请求
+    curl -v 10.29.2.1:8800/objects/test4_1 -XPUT -d"this object will have only 1 instance" -H"Digest: SHA-256=incorrectHash"
+    由于Hash错误，返回BadRequest
+
+    上传包含正确Hash的请求
+    curl -v 10.29.2.1:8800/objects/test4_1 -XPUT -d"this object will have only 1 instance" -H"Digest: SHA-256=aWKQ2BipX94sb+h3xdTbWYAu1yzjn5vyFG2SOwUQIXY="
+    返回200
+
+    上传包含正确Hash，但是名字不同的请求
+    curl -v 10.29.2.1:8800/objects/test4_2 -XPUT -d"this object will have only 1 instance" -H"Digest: SHA-256=aWKQ2BipX94sb+h3xdTbWYAu1yzjn5vyFG2SOwUQIXY="
+    返回200
+
+    定位文件所在节点
+    curl 10.29.2.1:8800/locate/aWKQ2BipX94sb+h3xdTbWYAu1yzjn5vyFG2SOwUQIXY=
+    定位成功
+
+    查看对象的数据
+    curl 10.29.2.1:8800/objects/test4_2
+
+    查看名字不同但Hash相同的对象数据
+    curl 10.29.2.1:8800/objects/test4_1
+
+    查看版本信息
+    curl 10.29.2.1:8800/version/test4_1
+
+    查看版本信息
+    curl 10.29.2.1:8800/version/test4_2
+
+    两个版本信息一致，说明映射的是一个文件
+
+    多次上传文件，查看数据节点中文件数量，仅有一个副本
+
+    至此，简单的数据校验与去重完成

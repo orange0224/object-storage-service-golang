@@ -1,0 +1,110 @@
+1.配置elasticsearch环境
+    方式一 本机配置：
+        sudo apt-get install elasticsearch
+
+    方式二 使用docker配置
+        设置max_map_count
+        先查看max_map_count，设置为262144
+        cat /proc/sys/vm/max_map_count
+        sudo sysctl -w vm.max_map_count=262144
+
+        下载镜像并运行
+        docker pull elasticsearch:7.7.0
+        docker run --name=elasticsearch-storage -d -e ES_JAVA_OPTS="-Xms512m -Xmx512m" -e "discovery.type=single-node" -p 9200:9200 -p 9300:9300 elasticsearch:7.7.0
+
+        访问localhost:9200，返回一条JSON表示成功
+
+        安装elasticsearch-head
+        docker pull mobz/elasticsearch-head:5
+        创建容器
+        docker create --name=elasticsearch-head-storage -p 9100:9100 mobz/elasticsearch-head:5
+        启动容器
+        docker start elasticsearch-head-storage
+        访问localhost:9100，发现上方提示未连接，是因为跨域访问的问题，需要在服务端做CORS配置
+
+        进入elasticsearch容器
+        docker exec -it elasticsearch-storage /bin/bash
+        编辑配置文件
+        vi config/elasticsearch.yml
+            添加两行：
+                http.cors.enabled: true
+                http.cors.allow-origin: "*"
+            使用wq退出
+        exit退出容器
+        重启容器
+        docker restart elasticsearch-storage
+
+
+        修改vendor.js
+        从head中复制vendor.js
+        docker cp elasticsearch-head-storage:/usr/src/app/_site/vendor.js /home/lxs/
+        编辑vendor.js
+            在6886行：修改为		contentType: "application/json;charset=UTF-8"
+            在7573行：修改为	var inspectData = s.contentType === "application/json;charset=UTF-8" &&
+        复制回容器
+        docker cp /home/lxs/vendor.js elasticsearch-head-storage:/usr/src/app/_site
+        重启容器
+        docker restart elasticsearch-head-storage
+2.元数据服务启动以后，还需要在es上创建metadata索引以及objects类型的映射
+    curl -H"Content-Type: application/json" 192.168.110.134:9200/metadata -XPUT -d'{"mappings":{"properties":{"name":{"type":"text","index":false},"version":{"type":"integer"},"size":{"type":"integer"},"hash":{"type":"text"}}}}'
+    这里由于提前创建过了所以提示错误，但是命令是有效的
+
+3.测试
+    初始化网络环境，同part2
+
+    初始化存储目录，同part2
+
+    启动容器
+    docker start rabbitmq-server-storage
+    docker start elasticsearch-storage
+    docker start elasticsearch-head-storage
+
+    设置环境变量
+    export RABBITMQ_SERVER=amqp://test:test@192.168.110.134:5672
+    export ES_SERVER=192.168.110.134:9200
+
+    启动程序，同part2
+
+    尝试发送不带有Hash的put请求，由于没有Hash，返回BadRequest
+    curl -v 10.29.2.2:8800/objects/test3 -XPUT -d"this is object test3"
+
+    计算上传目标的Hash，并添加到Header中上传
+    echo -n "this is object test3" | openssl dgst -sha256 -binary | base64
+    GYqqAdFPt+CScnUDc0/Gcu3kwcWmOADKNYpiZtdbgsM=
+    发送数据
+    curl -v 10.29.2.2:8800/objects/test3 -XPUT -d"this is object test3" -H"Digest: SHA-256=GYqqAdFPt+CScnUDc0/Gcu3kwcWmOADKNYpiZtdbgsM="
+    正常上传，返回200
+
+    查看test3的最新版本的数据
+    curl 10.29.2.1:8800/objects/test3
+
+    上传第二个test3版本
+    echo -n "this is object test3 version 2" | openssl dgst -sha256 -binary | base64cWmOADKNYpiZtdbgsM="
+    cAPvsxZe1PR54zIESQy0BaxC1pYJIvaHSF3qEOZYYIo=
+    curl -v 10.29.2.2:8800/objects/test3 -XPUT -d"this is object test3 version 2" -H"Digest: SHA-256=cAPvsxZe1PR54zIESQy0BaxC1pYJIvaHSF3qEOZYYIo="
+    正常上传，返回200
+
+    查看test3的最新版本的数据
+    curl 10.29.2.1:8800/objects/test3
+
+    定位文件所在数据节点
+    curl 10.29.2.1:8800/locate/cAPvsxZe1PR54zIESQy0BaxC1pYJIvaHSF3qEOZYYIo=
+
+    查看文件版本
+    curl 10.29.2.1:8800/versions/test3
+    两个版本，正常
+
+    查看指定版本的文件
+    curl 10.29.2.1:8800/objects/test3?version=2
+    正常获取数据
+
+    删除文件（逻辑删除）
+    curl -v 10.29.2.1:8800/objects/test3 -XDELETE
+    删除后会将Hash标记为""，正常删除，返回200
+
+    查看文件版本发现已删除
+    curl 10.29.2.1:8800/versions/test3
+
+
+    指定版本查看仍然可以查看到，但直接获取文件会返回404
+

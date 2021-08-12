@@ -1,0 +1,63 @@
+1.初始化网络环境
+    sudo ifconfig ens33:1 10.29.1.1/16
+    sudo ifconfig ens33:2 10.29.1.2/16
+    sudo ifconfig ens33:3 10.29.1.3/16
+    sudo ifconfig ens33:4 10.29.1.4/16
+    sudo ifconfig ens33:5 10.29.1.5/16
+    sudo ifconfig ens33:6 10.29.1.6/16
+    sudo ifconfig ens33:7 10.29.2.1/16
+    sudo ifconfig ens33:8 10.29.2.2/16
+
+2.初始化存储路径
+    for i in `seq 1 6`;do mkdir -p /tmp/$i/objects; done
+	for i in `seq 1 6`;do mkdir -p /tmp/$i/temp;done
+
+3.启动容器
+    docker start rabbitmq-server-storage
+    docker start elasticsearch-storage
+    docker start elasticsearch-head-storage
+
+4.设置环境变量
+    export ES_SERVER=192.168.110.134:9200
+    export RABBITMQ_SERVER=amqp://test:test@192.168.110.134:5672
+
+5.启动程序
+    LISTEN_ADDRESS=10.29.1.1:8800 STORAGE_ROOT=/tmp/1 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.2:8800 STORAGE_ROOT=/tmp/2 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.3:8800 STORAGE_ROOT=/tmp/3 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.4:8800 STORAGE_ROOT=/tmp/4 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.5:8800 STORAGE_ROOT=/tmp/5 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.6:8800 STORAGE_ROOT=/tmp/6 go run dataServer.go &
+
+    LISTEN_ADDRESS=10.29.2.1:8800 go run apiServer.go &
+    LISTEN_ADDRESS=10.29.2.2:8800 go run apiServer.go &
+
+6.准备要上传的文件
+    dd if=/dev/urandom of=/tmp/file bs=1000 count=100
+
+    openssl dgst -sha256 -binary /tmp/file | base64
+
+    dd if=/tmp/file of=/tmp/first bs=1000 count=50
+
+    dd if=/tmp/file of=/tmp/second bs=1000 skip=32 count=68
+
+7.测试
+    参数：$hash$表示计算出来的hash，$token$表示上传请求获得的token地址
+
+    获取token
+    curl -v 10.29.2.1:8800/objects/test6 -XPOST -H"Digest: SHA-256=$hash$" -H"Size: 100000"
+    返回201
+
+    上传第一部分
+    curl -v -XPUT --data-binary @/tmp/first 10.29.2.1:8800/$token$
+    返回continue与ok
+
+    上传第二部分
+    curl -v -XPUT --data-binary @/tmp/second -H"range: bytes=32000-" 10.29.2.1:8800/$token$
+    返回continue与ok
+
+    获取上传的数据
+    curl 10.29.2.1:8800/objects/test6
+
+    如果Hash或者Token中有转义字符，那么不能得到结果，但从各数据节点的分片情况看，断点续传是正常的
+    若解决本程序的问题，将REST的RPC变成使用JSON传递参数即可

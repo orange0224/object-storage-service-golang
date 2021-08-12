@@ -1,0 +1,96 @@
+1.初始化网络环境
+    sudo ifconfig ens33:1 10.29.1.1/16
+    sudo ifconfig ens33:2 10.29.1.2/16
+    sudo ifconfig ens33:3 10.29.1.3/16
+    sudo ifconfig ens33:4 10.29.1.4/16
+    sudo ifconfig ens33:5 10.29.1.5/16
+    sudo ifconfig ens33:6 10.29.1.6/16
+    sudo ifconfig ens33:7 10.29.2.1/16
+    sudo ifconfig ens33:8 10.29.2.2/16
+
+2.初始化存储路径
+    for i in `seq 1 6`;do mkdir -p /tmp/$i/objects; done
+	for i in `seq 1 6`;do mkdir -p /tmp/$i/temp;done
+
+3.启动容器
+    docker start rabbitmq-server-storage
+    docker start elasticsearch-storage
+    docker start elasticsearch-head-storage
+
+4.设置环境变量
+    export ES_SERVER=192.168.110.134:9200
+    export RABBITMQ_SERVER=amqp://test:test@192.168.110.134:5672
+
+5.启动程序
+    LISTEN_ADDRESS=10.29.1.1:8800 STORAGE_ROOT=/tmp/1 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.2:8800 STORAGE_ROOT=/tmp/2 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.3:8800 STORAGE_ROOT=/tmp/3 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.4:8800 STORAGE_ROOT=/tmp/4 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.5:8800 STORAGE_ROOT=/tmp/5 go run dataServer.go &
+    LISTEN_ADDRESS=10.29.1.6:8800 STORAGE_ROOT=/tmp/6 go run dataServer.go &
+
+    LISTEN_ADDRESS=10.29.2.1:8800 go run apiServer.go &
+    LISTEN_ADDRESS=10.29.2.2:8800 go run apiServer.go &
+
+6.可能遇到的状况：
+    cpuid这个库存在错误，无法通过编译，解决方案：
+        先查看gopath，进入gopath
+        进入$GOPATH/pkg/mod/github.com/klauspost/cpuid/v2@v2.0.6
+        编辑cpuid.go,如果无权限可使用sudo
+        查看报错原因与行数：
+            cpuid.go:443:31: invalid operation: 1 << (feat & flagMask) (shift count type FeatureID, must be unsigned integer)
+            cpuid.go:447:29: invalid operation: 1 << (feat & flagMask) (shift count type FeatureID, must be unsigned integer)
+            cpuid.go:454:33: invalid operation: 1 << (offset & flagMask) (shift count type FeatureID, must be unsigned integer)
+            cpuid.go:460:17: invalid operation: 1 << (offset & flagMask) (shift count type FeatureID, must be unsigned integer)
+            得知这是一个语法错误，是库的问题，那么就修改库，将FeatureID转换为unsigned integer
+
+            查看定义：type FeatureID int可知其本身就是个int
+            编写函数转换类型
+            func convertFeatureIDToUint(feat FeatureID)uint{
+	            var num int=int(feat)
+	            return uint(num)
+            }
+            在报错的地方使用即可
+
+        修改库以后可以顺利通过编译
+
+7.测试
+    首先计算上传对象的Hash
+    echo -n "this object will be separate to 4+2 shards" | openssl dgst -sha256 -binary | base64
+    MBMxWHrPMsuOBaVYHkwScZQRyTRMQyiKp2oelpLZza8=
+
+    上传对象，附带头信息
+    curl -v 10.29.2.1:8800/objects/test5 -XPUT -d"this object will be separate to 4+2 shards" -H"Digest: SHA-256=MBMxWHrPMsuOBaVYHkwScZQRyTRMQyiKp2oelpLZza8="
+    上传成功返回200
+
+    查看数据分片位置
+    ls -ltr /tmp/?/objects
+    可以看到共有4+2个分片，分片id从0~5
+
+    获取对象，验证是否可以正常合并出正确的数据
+    curl 10.29.2.1:8800/objects/test5
+    可以获得数据
+
+    尝试定位文件
+    curl 10.29.2.1:8800/locate/MBMxWHrPMsuOBaVYHkwScZQRyTRMQyiKp2oelpLZza8=
+    可以获得6个分片所在的位置信息
+
+    删除一个分片
+    rm /tmp/1/objects/MBMxWHrPMsuOBaVYHkwScZQRyTRMQyiKp2oelpLZza8=.*
+
+    破坏一个分片
+    echo some_data > /tmp/2/objects/MBMxWHrPMsuOBaVYHkwScZQRyTRMQyiKp2oelpLZza8=.*
+
+    查看数据分片位置
+    ls -ltr /tmp/?/objects
+    可以看到共有5个分片，缺失一个分片
+
+    尝试获取对象，并在获取对象时修复分片
+    curl 10.29.2.1:8800/objects/test5
+    可以看到在部分分片丢失、错误的情况下还可以得到正确的数据
+
+    查看数据分片是否被恢复
+    ls -ltr /tmp/?/objects
+    可以看到分片数量恢复到6个
+
+    至此，数据校验与即时修复完成
